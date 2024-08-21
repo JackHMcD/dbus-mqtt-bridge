@@ -16,7 +16,7 @@ import (
 
 const configPath string = "config.json"
 
-var mqtt_client *mqtt.Client
+var mqtt_client mqtt.Client
 var dbus_conn *dbus.Conn
 
 type DbusConfig struct {
