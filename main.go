@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/godbus/dbus/v5"
+	"github.com/godbus/dbus"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -16,7 +16,7 @@ import (
 
 const configPath string = "config.json"
 
-//var mqtt_client *mqtt.Client
+var mqtt_client mqtt.Client
 var dbus_conn *dbus.Conn
 
 type DbusConfig struct {
@@ -102,7 +102,7 @@ func initMqtt() (err error) {
 		opts.SetPassword(conf.Password)
 	}
 
-	mqtt_client := mqtt.NewClient(opts)
+	mqtt_client = mqtt.NewClient(opts)
 	if token := mqtt_client.Connect(); token.Wait() && token.Error() != nil {
 		err = token.Error()
 		return
@@ -138,9 +138,10 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (value interface{
 	parts := strings.Split(structPath, ".")
 	for _, part := range parts {
 		val := reflect.ValueOf(msgBody)
+		fmt.Printf("Current msgBody: %+v\n", msgBody) // Debugging line
 
 		// check, if next part is a map
-		if part[0:2] == "['" {
+		if strings.HasPrefix(part, "['") && strings.HasSuffix(part, "']") {
 			keyStr := part[2 : len(part)-2]
 
 			var key reflect.Value
@@ -151,15 +152,16 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (value interface{
 					break
 				}
 			}
-			if found == false {
+			if !found {
 				err = errors.New("can't find key '" + keyStr + "' in map")
+				return
 			}
 			msgBody = val.MapIndex(key).Interface()
 			continue
 		}
 
 		// check, if next part is a slice
-		if part[0] == '[' {
+		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
 			var idx int
 			idx, err = strconv.Atoi(part[1 : len(part)-1])
 			if err != nil {
@@ -170,15 +172,36 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (value interface{
 		}
 
 		// if neither map or slice, it must be a struct
-		{
-			msgBody = val.FieldByName(part).Interface()
-			continue
-		}
+		msgBody = val.FieldByName(part).Interface()
 	}
 
-	value = msgBody
+	// Check for PlaybackStatus and categorize
+	if statusMap, ok := msgBody.(map[string]interface{}); ok {
+		if status, exists := statusMap["PlaybackStatus"]; exists {
+			switch status {
+			case "Playing":
+				value = "Playing"
+			case "Stopped":
+				value = "Stopped"
+			case "Paused":
+				value = "Paused"
+			default:
+				err = errors.New("unknown PlaybackStatus: " + status.(string))
+				return
+			}
+		} else {
+			err = errors.New("PlaybackStatus key not found")
+			return
+		}
+	} else {
+		value = msgBody
+	}
 	return
 }
+
+
+
+
 
 func dbus_to_mqtt_loop() {
 	signals := make(chan *dbus.Signal, 10)
@@ -202,24 +225,8 @@ func dbus_to_mqtt_loop() {
 		if mapping.Dbus.RemoveQuotmark {
 			valStr = strings.Replace(valStr, "\"", "", -1)
 		}
-		////////////
-		conf := config.Mqtt
 
-		opts := mqtt.NewClientOptions()
-		for _, server := range conf.Servers {
-			opts.AddBroker(server)
-		}
-		opts.SetClientID(conf.ClientID)
-		if conf.Username != "" {
-			opts.SetUsername(conf.Username)
-		}
-		if conf.Password != "" {
-			opts.SetPassword(conf.Password)
-		}
-		/////////////////////
-		
 		// send MQTT-Message
-		mqtt_client := mqtt.NewClient(opts)
 		token := mqtt_client.Publish(mapping.Mqtt.Topic, 0, false, valStr)
 		token.Wait()
 		err = token.Error()
