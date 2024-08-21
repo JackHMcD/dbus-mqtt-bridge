@@ -204,6 +204,7 @@ func dbus_to_mqtt_loop() {
 		}
 
 		// send MQTT-Message
+		mqtt_client = mqtt.NewClient(opts)
 		token := mqtt_client.Publish(mapping.Mqtt.Topic, 0, false, valStr)
 		token.Wait()
 		err = token.Error()
