@@ -202,7 +202,22 @@ func dbus_to_mqtt_loop() {
 		if mapping.Dbus.RemoveQuotmark {
 			valStr = strings.Replace(valStr, "\"", "", -1)
 		}
+		////////////
+		conf := config.Mqtt
 
+		opts := mqtt.NewClientOptions()
+		for _, server := range conf.Servers {
+			opts.AddBroker(server)
+		}
+		opts.SetClientID(conf.ClientID)
+		if conf.Username != "" {
+			opts.SetUsername(conf.Username)
+		}
+		if conf.Password != "" {
+			opts.SetPassword(conf.Password)
+		}
+		/////////////////////
+		
 		// send MQTT-Message
 		mqtt_client := mqtt.NewClient(opts)
 		token := mqtt_client.Publish(mapping.Mqtt.Topic, 0, false, valStr)
