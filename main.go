@@ -102,7 +102,7 @@ func initMqtt() (err error) {
 		opts.SetPassword(conf.Password)
 	}
 
-	mqtt_client = mqtt.NewClient(opts)
+	mqtt_client := mqtt.NewClient(opts)
 	if token := mqtt_client.Connect(); token.Wait() && token.Error() != nil {
 		err = token.Error()
 		return
@@ -204,7 +204,7 @@ func dbus_to_mqtt_loop() {
 		}
 
 		// send MQTT-Message
-		mqtt_client = mqtt.NewClient(opts)
+		mqtt_client := mqtt.NewClient(opts)
 		token := mqtt_client.Publish(mapping.Mqtt.Topic, 0, false, valStr)
 		token.Wait()
 		err = token.Error()
