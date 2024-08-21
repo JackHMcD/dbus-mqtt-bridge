@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/guelfey/go.dbus"
+	"github.com/godbus/dbus/v5"
 	"io/ioutil"
 	"os"
 	"reflect"
