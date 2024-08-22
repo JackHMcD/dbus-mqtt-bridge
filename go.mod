@@ -1,4 +1,4 @@
-module mqtt-client-Go
+module dbus-mqtt-bridge
 
 go 1.23.0
 
