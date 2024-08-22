@@ -1,4 +1,4 @@
-module dbus-mqtt-bridge
+module github.com/JackHMcD/dbus-mqtt-bridge
 
 go 1.23.0
 
