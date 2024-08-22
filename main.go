@@ -153,7 +153,7 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (value interface{
 				}
 			}
 			if !found {
-				err = errors.New("can't find key '" + keyStr + "' in map")
+//				err = errors.New("can't find key '" + keyStr + "' in map")
 				return
 			}
 			msgBody = val.MapIndex(key).Interface()
@@ -226,6 +226,10 @@ func dbus_to_mqtt_loop() {
 			valStr = strings.Replace(valStr, "\"", "", -1)
 		}
 
+		if strings.Compare(valStr, "<nil>") == 0 {
+			continue
+		}
+		
 		// send MQTT-Message
 		token := mqtt_client.Publish(mapping.Mqtt.Topic, 0, false, valStr)
 		token.Wait()
