@@ -12,9 +12,14 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"flag"
 )
 
-const configPath string = "config.json"
+var configPath string
+
+func init() {
+    flag.StringVar(&configPath, "config", "config.json", "path to the config file")
+}
 
 var mqtt_client mqtt.Client
 var dbus_conn *dbus.Conn
@@ -243,6 +248,9 @@ func ctrl_loop() {
 }
 
 func main() {
+	flag.Parse()
+    	fmt.Println("Config file path:", configPath)
+	
 	var err error
 	err = readConfig()
 	if err != nil {
