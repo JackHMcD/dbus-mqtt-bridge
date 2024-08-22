@@ -1,0 +1,25 @@
+{
+	"Dbus": { },
+	"Mqtt": {
+		"Servers": ["mqtt://:1883"],
+		"ClientID": "MediaPC",
+		"Username": "",
+		"Password": ""
+	},
+	"Mapping": [
+	{
+		"Mqtt": {
+			"Topic": "MediaStatus"
+		},
+		"Dbus": {
+			"Type": "Signal",
+			"Path": "/org/mpris/MediaPlayer2",
+			"Interface": "org.freedesktop.DBus.Properties",
+			"Sender": "org.mpris.MediaPlayer2.chromium.instance2108",
+			"StructPath": "[1].['PlaybackStatus']",
+			"RemoveQuotmark": true
+		},
+		"Mode": "passtrough"
+	}
+	]
+}
