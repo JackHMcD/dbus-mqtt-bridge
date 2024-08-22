@@ -121,10 +121,36 @@ func registerDbusSignals() (error) {
 		matchStr := fmt.Sprintf("type='signal',path='%v',interface='%v',sender='%v'",
 			mapping.Dbus.Path,
 			mapping.Dbus.Interface,
-			mapping.Dbus.Sender)
+			findMPRISPlayers())
 		dbus_conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, matchStr)
 	}
 	return nil
+}
+
+func findMPRISPlayers() string {
+    // Connect to the session bus
+    conn, err := dbus.SessionBus()
+    if err != nil {
+        return fmt.Sprintf("Failed to connect to session bus: %v", err)
+    }
+
+    // Call ListNames method on the bus
+    var names []string
+    err = conn.Object("org.freedesktop.DBus", "/org/freedesktop/DBus").
+        Call("org.freedesktop.DBus.ListNames", 0).Store(&names)
+    if err != nil {
+        return fmt.Sprintf("Failed to list names on the bus: %v", err)
+    }
+
+    // Filter names to find MPRIS players
+    var result strings.Builder
+    for _, name := range names {
+        if strings.HasPrefix(name, "org.mpris.MediaPlayer2") {
+            result.WriteString(name)
+        }
+    }
+
+    return result.String()
 }
 
 func findMappingForDbusSignal(signal *dbus.Signal) (mapping MappingStruct, err error) {
