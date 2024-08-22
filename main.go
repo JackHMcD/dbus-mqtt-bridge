@@ -175,27 +175,8 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (value interface{
 		msgBody = val.FieldByName(part).Interface()
 	}
 
-	// Check for PlaybackStatus and categorize
-	if statusMap, ok := msgBody.(map[string]interface{}); ok {
-		if status, exists := statusMap["PlaybackStatus"]; exists {
-			switch status {
-			case "Playing":
-				value = "Playing"
-			case "Stopped":
-				value = "Stopped"
-			case "Paused":
-				value = "Paused"
-			default:
-				err = errors.New("unknown PlaybackStatus: " + status.(string))
-				return
-			}
-		} else {
-			err = errors.New("PlaybackStatus key not found")
-			return
-		}
-	} else {
 		value = msgBody
-	}
+
 	return
 }
 
