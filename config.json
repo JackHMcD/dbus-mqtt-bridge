@@ -15,7 +15,7 @@
 			"Type": "Signal",
 			"Path": "/org/mpris/MediaPlayer2",
 			"Interface": "org.freedesktop.DBus.Properties",
-			"Sender": "org.mpris.MediaPlayer2.chromium.instance2108",
+			"Sender": "org.mpris.MediaPlayer2.chromium.??????????",
 			"StructPath": "[1].['PlaybackStatus']",
 			"RemoveQuotmark": true
 		},
