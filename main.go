@@ -114,8 +114,31 @@ func initMqtt() (err error) {
         err = token.Error()
         return
     }
+
+    // Subscribe to the topic that will trigger play/pause
+    mqttClient.Subscribe("PlayPauseMediaPC", 0, func(client mqtt.Client, msg mqtt.Message) {
+        handlePlayPause()
+    })
+
     return
 }
+
+func handlePlayPause() {
+    players, err := findMPRISPlayers()
+    if err != nil {
+        logError(err)
+        return
+    }
+
+    for _, player := range players {
+        obj := dbusConn.Object(player, "/org/mpris/MediaPlayer2")
+        call := obj.Call("org.mpris.MediaPlayer2.Player.PlayPause", 0)
+        if call.Err != nil {
+            logError(call.Err)
+        }
+    }
+}
+
 
 func registerDbusSignals() error {
     players, err := findMPRISPlayers()
