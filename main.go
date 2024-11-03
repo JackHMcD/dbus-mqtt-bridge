@@ -13,6 +13,7 @@ import (
     "reflect"
     "strconv"
     "strings"
+    "sync"
     "time"
 )
 
@@ -26,6 +27,8 @@ var (
     mqttClient mqtt.Client
     dbusConn   *dbus.Conn
     config     Config
+    signalCh   chan *dbus.Signal
+    wg         sync.WaitGroup
 )
 
 type DbusConfig struct{}
@@ -174,13 +177,8 @@ func registerDbusSignals() error {
 }
 
 func findMPRISPlayers() ([]string, error) {
-    conn, err := dbus.SessionBus()
-    if err != nil {
-        return nil, fmt.Errorf("failed to connect to session bus: %w", err)
-    }
-
     var names []string
-    if err := conn.Object("org.freedesktop.DBus", "/org/freedesktop/DBus").
+    if err := dbusConn.Object("org.freedesktop.DBus", "/org/freedesktop/DBus").
         Call("org.freedesktop.DBus.ListNames", 0).Store(&names); err != nil {
         return nil, fmt.Errorf("failed to list names on the bus: %w", err)
     }
@@ -244,8 +242,9 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (interface{}, err
 func dbusToMqttLoop() {
     signals := make(chan *dbus.Signal, 10)
     dbusConn.Signal(signals)
+    signalCh = signals
 
-    for signal := range signals {
+    for signal := range signalCh {
         mapping, err := findMappingForDbusSignal(signal)
         if err != nil {
             logError(err)
@@ -315,10 +314,17 @@ func main() {
 
     registerDbusSignals()
 
-    go dbusToMqttLoop()
-    go mqttToDbusLoop()
-
+    wg.Add(3)
     go func() {
+        defer wg.Done()
+        dbusToMqttLoop()
+    }()
+    go func() {
+        defer wg.Done()
+        mqttToDbusLoop()
+    }()
+    go func() {
+        defer wg.Done()
         ticker := time.NewTicker(10 * time.Second)
         defer ticker.Stop()
 
@@ -328,4 +334,6 @@ func main() {
     }()
 
     controlLoop()
+    close(signalCh)
+    wg.Wait()
 }
