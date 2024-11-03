@@ -62,36 +62,36 @@ func logError(err interface{}) {
     fmt.Printf("\n[ERROR]: %v", err)
 }
 
-func logDebug(msg interface{}) {
-    fmt.Printf("\n[DEBUG]: %+v", msg)
+func logInfo(msg interface{}) {
+    fmt.Printf("\n[INFO]: %+v", msg)
 }
 
 func readConfig() (err error) {
     configFile, err := os.Open(configPath)
     if err != nil {
-        return
+        return fmt.Errorf("failed to open config file: %w", err)
     }
     defer configFile.Close()
 
     rawData, err := ioutil.ReadAll(configFile)
     if err != nil {
-        return
+        return fmt.Errorf("failed to read config file: %w", err)
     }
 
     err = json.Unmarshal(rawData, &config)
     if err != nil {
-        return
+        return fmt.Errorf("failed to unmarshal config data: %w", err)
     }
-    logDebug(config)
-    return
+
+    return nil
 }
 
 func initDbus() (err error) {
     dbusConn, err = dbus.SessionBus()
     if err != nil {
-        return
+        return fmt.Errorf("failed to connect to D-Bus session bus: %w", err)
     }
-    return
+    return nil
 }
 
 func initMqtt() (err error) {
@@ -112,15 +112,17 @@ func initMqtt() (err error) {
     mqttClient = mqtt.NewClient(opts)
     if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
         err = token.Error()
-        return
+        return fmt.Errorf("failed to connect to MQTT server: %w", err)
     }
 
     // Subscribe to the topic that will trigger play/pause
-    mqttClient.Subscribe("PlayPauseMediaPC", 0, func(client mqtt.Client, msg mqtt.Message) {
+    if token := mqttClient.Subscribe("PlayPauseMediaPC", 0, func(client mqtt.Client, msg mqtt.Message) {
         handlePlayPause()
-    })
+    }); token.Wait() && token.Error() != nil {
+        return fmt.Errorf("failed to subscribe to MQTT topic: %w", token.Error())
+    }
 
-    return
+    return nil
 }
 
 func handlePlayPause() {
@@ -139,11 +141,10 @@ func handlePlayPause() {
     }
 }
 
-
 func registerDbusSignals() error {
     players, err := findMPRISPlayers()
     if err != nil {
-        return err
+        return fmt.Errorf("failed to find MPRIS players: %w", err)
     }
     for _, player := range players {
         mapping := MappingStruct{
@@ -205,7 +206,7 @@ func findMPRISPlayers() ([]string, error) {
 func findMappingForDbusSignal(signal *dbus.Signal) (mapping MappingStruct, err error) {
     for _, mapping = range config.Mapping {
         if signal.Path == mapping.Dbus.Path {
-            return
+            return mapping, nil
         }
     }
     return MappingStruct{}, errors.New("couldn't find mapping")
@@ -215,7 +216,6 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (value interface{
     parts := strings.Split(structPath, ".")
     for _, part := range parts {
         val := reflect.ValueOf(msgBody)
-        fmt.Printf("Current msgBody: %+v\n", msgBody)
 
         if strings.HasPrefix(part, "['") && strings.HasSuffix(part, "']") {
             keyStr := part[2 : len(part)-2]
@@ -239,7 +239,7 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (value interface{
             var idx int
             idx, err = strconv.Atoi(part[1 : len(part)-1])
             if err != nil {
-                return
+                return nil, err
             }
             msgBody = val.Index(idx).Interface()
             continue
@@ -248,8 +248,7 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (value interface{
         msgBody = val.FieldByName(part).Interface()
     }
 
-    value = msgBody
-    return
+    return msgBody, nil
 }
 
 func dbusToMqttLoop() {
@@ -266,6 +265,7 @@ func dbusToMqttLoop() {
         value, err := getVarFromDbusMsg(signal.Body, mapping.Dbus.StructPath)
         if err != nil {
             logError(err)
+            continue
         }
         valStr := fmt.Sprint(value)
         if mapping.Dbus.RemoveQuotmark {
@@ -285,6 +285,7 @@ func dbusToMqttLoop() {
 }
 
 func mqttToDbusLoop() {
+    // Placeholder for MQTT to D-Bus implementation
 }
 
 func controlLoop() {
@@ -295,11 +296,13 @@ func controlLoop() {
         fmt.Print("# ")
 
         cmd, _ := reader.ReadString('\n')
-        cmd = cmd[0 : len(cmd)-1]
+        cmd = strings.TrimSpace(cmd)
 
         switch cmd {
         case "exit":
             exit = true
+        default:
+            logInfo("Unknown command: " + cmd)
         }
     }
 }
