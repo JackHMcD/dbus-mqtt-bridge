@@ -320,7 +320,7 @@ func main() {
     }
 
     if err := initMqtt(); err != nil {
-        logError(err)
+	logError(err)
     }
 
     registerDbusSignals()
