@@ -22,11 +22,13 @@ func init() {
     flag.StringVar(&configPath, "config", "config.json", "path to the config file")
 }
 
-var mqttClient mqtt.Client
-var dbusConn *dbus.Conn
+var (
+    mqttClient mqtt.Client
+    dbusConn   *dbus.Conn
+    config     Config
+)
 
-type DbusConfig struct {
-}
+type DbusConfig struct{}
 
 type MqttConfig struct {
     Servers  []string
@@ -56,17 +58,15 @@ type Config struct {
     Mapping []MappingStruct
 }
 
-var config Config
-
-func logError(err interface{}) {
+func logError(err error) {
     fmt.Printf("\n[ERROR]: %v", err)
 }
 
-func logInfo(msg interface{}) {
-    fmt.Printf("\n[INFO]: %+v", msg)
+func logInfo(msg string) {
+    fmt.Printf("\n[INFO]: %s", msg)
 }
 
-func readConfig() (err error) {
+func readConfig() error {
     configFile, err := os.Open(configPath)
     if err != nil {
         return fmt.Errorf("failed to open config file: %w", err)
@@ -78,15 +78,11 @@ func readConfig() (err error) {
         return fmt.Errorf("failed to read config file: %w", err)
     }
 
-    err = json.Unmarshal(rawData, &config)
-    if err != nil {
-        return fmt.Errorf("failed to unmarshal config data: %w", err)
-    }
-
-    return nil
+    return json.Unmarshal(rawData, &config)
 }
 
-func initDbus() (err error) {
+func initDbus() error {
+    var err error
     dbusConn, err = dbus.SessionBus()
     if err != nil {
         return fmt.Errorf("failed to connect to D-Bus session bus: %w", err)
@@ -94,7 +90,7 @@ func initDbus() (err error) {
     return nil
 }
 
-func initMqtt() (err error) {
+func initMqtt() error {
     conf := config.Mqtt
 
     opts := mqtt.NewClientOptions()
@@ -110,15 +106,16 @@ func initMqtt() (err error) {
     }
 
     mqttClient = mqtt.NewClient(opts)
-    if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
-        err = token.Error()
-        return fmt.Errorf("failed to connect to MQTT server: %w", err)
+    token := mqttClient.Connect()
+    if token.Wait() && token.Error() != nil {
+        return fmt.Errorf("failed to connect to MQTT server: %w", token.Error())
     }
 
     // Subscribe to the topic that will trigger play/pause
-    if token := mqttClient.Subscribe("PlayPauseMediaPC", 0, func(client mqtt.Client, msg mqtt.Message) {
+    token = mqttClient.Subscribe("PlayPauseMediaPC", 0, func(client mqtt.Client, msg mqtt.Message) {
         handlePlayPause()
-    }); token.Wait() && token.Error() != nil {
+    })
+    if token.Wait() && token.Error() != nil {
         return fmt.Errorf("failed to subscribe to MQTT topic: %w", token.Error())
     }
 
@@ -146,13 +143,10 @@ func registerDbusSignals() error {
     if err != nil {
         return fmt.Errorf("failed to find MPRIS players: %w", err)
     }
+
     for _, player := range players {
         mapping := MappingStruct{
-            Mqtt: struct {
-                Topic string
-            }{
-                Topic: "MediaStatus",
-            },
+            Mqtt: struct{ Topic string }{Topic: "MediaStatus"},
             Dbus: struct {
                 Type            string
                 Path            dbus.ObjectPath
@@ -173,9 +167,7 @@ func registerDbusSignals() error {
         config.Mapping = append(config.Mapping, mapping)
 
         matchStr := fmt.Sprintf("type='signal',path='%v',interface='%v',sender='%v'",
-            mapping.Dbus.Path,
-            mapping.Dbus.Interface,
-            mapping.Dbus.Sender)
+            mapping.Dbus.Path, mapping.Dbus.Interface, mapping.Dbus.Sender)
         dbusConn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, matchStr)
     }
     return nil
@@ -188,9 +180,8 @@ func findMPRISPlayers() ([]string, error) {
     }
 
     var names []string
-    err = conn.Object("org.freedesktop.DBus", "/org/freedesktop/DBus").
-        Call("org.freedesktop.DBus.ListNames", 0).Store(&names)
-    if err != nil {
+    if err := conn.Object("org.freedesktop.DBus", "/org/freedesktop/DBus").
+        Call("org.freedesktop.DBus.ListNames", 0).Store(&names); err != nil {
         return nil, fmt.Errorf("failed to list names on the bus: %w", err)
     }
 
@@ -203,8 +194,8 @@ func findMPRISPlayers() ([]string, error) {
     return players, nil
 }
 
-func findMappingForDbusSignal(signal *dbus.Signal) (mapping MappingStruct, err error) {
-    for _, mapping = range config.Mapping {
+func findMappingForDbusSignal(signal *dbus.Signal) (MappingStruct, error) {
+    for _, mapping := range config.Mapping {
         if signal.Path == mapping.Dbus.Path {
             return mapping, nil
         }
@@ -212,7 +203,7 @@ func findMappingForDbusSignal(signal *dbus.Signal) (mapping MappingStruct, err e
     return MappingStruct{}, errors.New("couldn't find mapping")
 }
 
-func getVarFromDbusMsg(msgBody interface{}, structPath string) (value interface{}, err error) {
+func getVarFromDbusMsg(msgBody interface{}, structPath string) (interface{}, error) {
     parts := strings.Split(structPath, ".")
     for _, part := range parts {
         val := reflect.ValueOf(msgBody)
@@ -236,8 +227,7 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (value interface{
         }
 
         if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
-            var idx int
-            idx, err = strconv.Atoi(part[1 : len(part)-1])
+            idx, err := strconv.Atoi(part[1 : len(part)-1])
             if err != nil {
                 return nil, err
             }
@@ -320,7 +310,7 @@ func main() {
     }
 
     if err := initMqtt(); err != nil {
-	logError(err)
+    logError(err)
     }
 
     registerDbusSignals()
@@ -336,8 +326,6 @@ func main() {
             registerDbusSignals()
         }
     }()
-
-
 
     controlLoop()
 }
