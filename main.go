@@ -29,6 +29,9 @@ var (
     config     Config
     signalCh   chan *dbus.Signal
     wg         sync.WaitGroup
+    debounceMap = make(map[string]time.Time)
+    debounceDuration = 500 * time.Millisecond
+    bufferedSignalCh = make(chan *dbus.Signal, 100)
 )
 
 type DbusConfig struct{}
@@ -93,6 +96,7 @@ func initDbus() error {
     return nil
 }
 
+
 func initMqtt() error {
     conf := config.Mqtt
 
@@ -114,6 +118,8 @@ func initMqtt() error {
         return fmt.Errorf("failed to connect to MQTT server: %w", token.Error())
     }
 
+    logInfo("Connected to MQTT server")
+
     // Subscribe to the topic that will trigger play/pause
     token = mqttClient.Subscribe("PlayPauseMediaPC", 0, func(client mqtt.Client, msg mqtt.Message) {
         handlePlayPause()
@@ -122,8 +128,10 @@ func initMqtt() error {
         return fmt.Errorf("failed to subscribe to MQTT topic: %w", token.Error())
     }
 
+    logInfo("Subscribed to MQTT topic: PlayPauseMediaPC")
     return nil
 }
+
 
 func handlePlayPause() {
     players, err := findMPRISPlayers()
@@ -205,23 +213,22 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (interface{}, err
     parts := strings.Split(structPath, ".")
     for _, part := range parts {
         val := reflect.ValueOf(msgBody)
+        logInfo(fmt.Sprintf("Current part: %s, value: %v", part, val))
 
         if strings.HasPrefix(part, "['") && strings.HasSuffix(part, "']") {
             keyStr := part[2 : len(part)-2]
+            logInfo(fmt.Sprintf("Looking for key: %s", keyStr))
 
-            var key reflect.Value
-            found := false
-            for _, key = range val.MapKeys() {
-                if key.String() == keyStr {
-                    found = true
-                    break
+            if val.Kind() == reflect.Map {
+                mapVal := val.MapIndex(reflect.ValueOf(keyStr))
+                if !mapVal.IsValid() {
+                    logInfo(fmt.Sprintf("Key '%s' not found in map. Available keys: %v", keyStr, val.MapKeys()))
+                    continue  // Skip and continue to next signal
                 }
+                msgBody = mapVal.Interface()
+                continue
             }
-            if !found {
-                return nil, errors.New("can't find key '" + keyStr + "' in map")
-            }
-            msgBody = val.MapIndex(key).Interface()
-            continue
+            return nil, fmt.Errorf("message body is not a map, can't access key '%s'", keyStr)
         }
 
         if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
@@ -229,22 +236,46 @@ func getVarFromDbusMsg(msgBody interface{}, structPath string) (interface{}, err
             if err != nil {
                 return nil, err
             }
+            if idx >= val.Len() {
+                logInfo(fmt.Sprintf("Index %d out of range in array. Full signal: %v", idx, msgBody))
+                return nil, fmt.Errorf("index %d out of range in array", idx)
+            }
             msgBody = val.Index(idx).Interface()
             continue
         }
 
-        msgBody = val.FieldByName(part).Interface()
+        if val.Kind() == reflect.Ptr {
+            val = val.Elem()
+        }
+
+        fieldVal := val.FieldByName(part)
+        if !fieldVal.IsValid() {
+            logInfo(fmt.Sprintf("Field '%s' not found. Full signal: %v", part, msgBody))
+            return nil, fmt.Errorf("can't find field '%s'", part)
+        }
+        msgBody = fieldVal.Interface()
     }
 
     return msgBody, nil
 }
 
+
+
+// In dbusToMqttLoop function
 func dbusToMqttLoop() {
     signals := make(chan *dbus.Signal, 10)
     dbusConn.Signal(signals)
     signalCh = signals
 
     for signal := range signalCh {
+        logInfo(fmt.Sprintf("Received signal: %v", signal))
+        bufferedSignalCh <- signal
+    }
+}
+
+func processBufferedSignals() {
+    for signal := range bufferedSignalCh {
+        logInfo(fmt.Sprintf("Processing signal: %v", signal))
         mapping, err := findMappingForDbusSignal(signal)
         if err != nil {
             logError(err)
@@ -265,12 +296,39 @@ func dbusToMqttLoop() {
             continue
         }
 
-        token := mqttClient.Publish(mapping.Mqtt.Topic, 0, false, valStr)
-        token.Wait()
-        if err := token.Error(); err != nil {
-            logError(err)
+        publishMQTT(mapping.Mqtt.Topic, valStr)
+    }
+}
+
+func publishMQTT(topic, message string) {
+    retryCount := 3
+    for i := 0; i < retryCount; i++ {
+        if token := mqttClient.Publish(topic, 0, false, message); token.Wait() && token.Error() != nil {
+            logError(token.Error())
+            logInfo(fmt.Sprintf("Retrying %d/%d", i+1, retryCount))
+            time.Sleep(1 * time.Second)
+        } else {
+            logInfo("Published successfully")
+            return
         }
     }
+    logError(errors.New("failed to publish message after retries"))
+}
+
+
+
+
+
+func shouldProcessSignal(signal *dbus.Signal) bool {
+    key := fmt.Sprintf("%v-%v", signal.Path, signal.Name)
+    now := time.Now()
+    if lastTime, ok := debounceMap[key]; ok {
+        if now.Sub(lastTime) < debounceDuration {
+            return false
+        }
+    }
+    debounceMap[key] = now
+    return true
 }
 
 func mqttToDbusLoop() {
@@ -299,17 +357,21 @@ func controlLoop() {
 func main() {
     flag.Parse()
     fmt.Println("Config file path:", configPath)
+    fmt.Println("MQTT Servers:", config.Mqtt.Servers)
 
     if err := readConfig(); err != nil {
         logError(err)
+        return
     }
 
     if err := initDbus(); err != nil {
         logError(err)
+        return
     }
 
     if err := initMqtt(); err != nil {
-    logError(err)
+        logError(err)
+        return
     }
 
     registerDbusSignals()
@@ -332,8 +394,13 @@ func main() {
             registerDbusSignals()
         }
     }()
+    go func() {
+        defer wg.Done()
+        processBufferedSignals()
+    }()
 
     controlLoop()
     close(signalCh)
+    close(bufferedSignalCh)
     wg.Wait()
 }
