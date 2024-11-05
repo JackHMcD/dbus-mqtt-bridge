@@ -23,10 +23,13 @@ func main() {
         log.Fatal(err)
     }
 
-    // Subscribe to MQTT topic for play/pause messages
-    topic := "mpris/play_pause"
+    // Subscribe to MQTT topic
+    topic := "mpris/command"
     client.Subscribe(topic, 0, func(client mqtt.Client, msg mqtt.Message) {
-        fmt.Println("Play/Pause MQTT message received")
+        fmt.Println("MQTT message received")
+
+        // Determine the command
+        command := string(msg.Payload())
 
         // List DBus names
         var names []string
@@ -41,13 +44,19 @@ func main() {
         // Find MPRIS interfaces starting with org.mpris.MediaPlayer2.chromium
         for _, name := range names {
             if strings.HasPrefix(name, "org.mpris.MediaPlayer2.chromium") {
-                // Call PlayPause method
+                // Call appropriate method based on the command
                 playerObj := conn.Object(name, "/org/mpris/MediaPlayer2")
-                playerCall := playerObj.Call("org.mpris.MediaPlayer2.Player.PlayPause", 0)
-                if playerCall.Err != nil {
-                    fmt.Println("Failed to play/pause:", playerCall.Err)
+                var playerCall *dbus.Call
+
+                switch command {
+                case "playpause":
+                    playerCall = playerObj.Call("org.mpris.MediaPlayer2.Player.PlayPause", 0)
+                }
+
+                if playerCall != nil && playerCall.Err != nil {
+                    fmt.Println("Failed to execute command:", command, playerCall.Err)
                 } else {
-                    fmt.Println("Play/Pause successfully called on", name)
+                    fmt.Println(command, "successfully called on", name)
                 }
             }
         }
