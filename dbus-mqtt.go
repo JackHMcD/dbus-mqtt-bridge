@@ -3,30 +3,14 @@ package main
 import (
     "fmt"
     "log"
+    "strings"
     "github.com/eclipse/paho.mqtt.golang"
     "github.com/godbus/dbus"
-    "strings"
 )
-
-// Function to discover MPRIS media player service name
-func discoverMediaPlayer(conn *dbus.Conn) (string, error) {
-    obj := conn.Object("org.freedesktop.DBus", "/org/freedesktop/DBus")
-    var services []string
-    err := obj.Call("org.freedesktop.DBus.ListNames", 0).Store(&services)
-    if err != nil {
-        return "", err
-    }
-    for _, service := range services {
-        if strings.HasPrefix(service, "org.mpris.MediaPlayer2.") {
-            return service, nil
-        }
-    }
-    return "", fmt.Errorf("no MPRIS media player service found")
-}
 
 func main() {
     // Set up MQTT client
-    opts := mqtt.NewClientOptions().AddBroker("tcp://broker.hivemq.com:1883")
+    opts := mqtt.NewClientOptions().AddBroker("tcp://192.168.0.100:1883")
     opts.SetClientID("mpris_mqtt_client")
     client := mqtt.NewClient(opts)
     if token := client.Connect(); token.Wait() && token.Error() != nil {
@@ -39,17 +23,40 @@ func main() {
         log.Fatal(err)
     }
 
-    // Discover MPRIS media player service name
-    mediaPlayer, err := discoverMediaPlayer(conn)
-    if err != nil {
-        log.Fatal("Failed to discover media player:", err)
-    }
-    fmt.Println("Discovered media player service:", mediaPlayer)
+    // Subscribe to MQTT topic for play/pause messages
+    topic := "mpris/play_pause"
+    client.Subscribe(topic, 0, func(client mqtt.Client, msg mqtt.Message) {
+        fmt.Println("Play/Pause MQTT message received")
 
-    // Listen for MPRIS messages
-    call := conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, fmt.Sprintf("type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',path='/org/mpris/MediaPlayer2',sender='%s'", mediaPlayer))
-    if call.Err != nil {
-        log.Fatal(call.Err)
+        // List DBus names
+        var names []string
+        obj := conn.BusObject()
+        call := obj.Call("org.freedesktop.DBus.ListNames", 0)
+        if call.Err != nil {
+            log.Fatal(call.Err)
+        }
+
+        call.Store(&names)
+
+        // Find MPRIS interfaces starting with org.mpris.MediaPlayer2.chromium
+        for _, name := range names {
+            if strings.HasPrefix(name, "org.mpris.MediaPlayer2.chromium") {
+                // Call PlayPause method
+                playerObj := conn.Object(name, "/org/mpris/MediaPlayer2")
+                playerCall := playerObj.Call("org.mpris.MediaPlayer2.Player.PlayPause", 0)
+                if playerCall.Err != nil {
+                    fmt.Println("Failed to play/pause:", playerCall.Err)
+                } else {
+                    fmt.Println("Play/Pause successfully called on", name)
+                }
+            }
+        }
+    })
+
+    // Listen for MPRIS messages (optional, in case you still need this part)
+    addMatchCall := conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, "type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',path='/org/mpris/MediaPlayer2'")
+    if addMatchCall.Err != nil {
+        log.Fatal(addMatchCall.Err)
     }
 
     c := make(chan *dbus.Signal, 10)
@@ -57,35 +64,11 @@ func main() {
 
     fmt.Println("Listening for MPRIS messages and publishing to MQTT...")
 
-    // Subscribe to MQTT topic for play/pause commands
-    token := client.Subscribe("mpris/commands", 0, func(client mqtt.Client, msg mqtt.Message) {
-        command := string(msg.Payload())
-        switch command {
-        case "play":
-            sendCommand(conn, mediaPlayer, "Play")
-        case "pause":
-            sendCommand(conn, mediaPlayer, "Pause")
-        default:
-            fmt.Println("Unknown command:", command)
-        }
-    })
-    token.Wait()
-
-    // Publish received MPRIS messages to MQTT
     for v := range c {
         if v.Name == "org.freedesktop.DBus.Properties.PropertiesChanged" {
             fmt.Println("MPRIS message received:", v.Body)
             token := client.Publish("mpris/messages", 0, false, fmt.Sprintf("%v", v.Body))
             token.Wait()
         }
-    }
-}
-
-// Function to send commands to the media player
-func sendCommand(conn *dbus.Conn, mediaPlayer string, command string) {
-    obj := conn.Object(mediaPlayer, "/org/mpris/MediaPlayer2")
-    call := obj.Call(fmt.Sprintf("org.mpris.MediaPlayer2.Player.%s", command), 0)
-    if call.Err != nil {
-        fmt.Println("Failed to send command:", call.Err)
     }
 }
